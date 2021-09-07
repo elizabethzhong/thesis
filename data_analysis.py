@@ -16,7 +16,7 @@ from itertools import chain
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
-from constants import CATEGORIES, TOP10RELATIONS
+from constants import CATEGORIES, TOP10RELATIONS, ALL_CATEGORIES
 import dgl
 
 
@@ -132,22 +132,11 @@ def visualise():
 
 
 def visuliseKnowledgeGraph():
-    CATEGORIES = [
-        "Renewal Term",
-        "Audit Rights",
-        "License Grant",
-        "Ip Ownership Assignment",
-        "Covenant Not To Sue",
-    ]
-
     lemmatizer = WordNetLemmatizer()
     G = nx.DiGraph()
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
-        for category in CATEGORIES:
+        for category in ALL_CATEGORIES:
             print("Test")
-            relations = []
-            relations_labels = []
-            nodes = []
             data = getData(category)
             for sentence in data:
                 if (triples := extractTriplesCoreNLP(client, sentence)) == []:
@@ -160,26 +149,30 @@ def visuliseKnowledgeGraph():
                     if subject == "agreement":
                         continue
                     # only include triples with relations in top 10
+                    """
                     if any(
                         item in lemmatise(relation, lemmatizer)
                         for item in TOP10RELATIONS[category]
                     ):
-                        relations.append((subject, object))
-                        relations_labels.append(relation)
-                        nodes.append(subject)
-                        nodes.append(object)
-            # G.add_nodes_from(nodes, color=colors[CATEGORIES.index(category)])
-            G.add_nodes_from(nodes, group=CATEGORIES.index(category))
-            G.add_edges_from(relations, labels=relations_labels)
+                    """
+                    # G.add_nodes_from(nodes, color=colors[CATEGORIES.index(category)])
+                    G.add_node(subject, group=ALL_CATEGORIES.index(category))
+                    G.add_node(object, group=ALL_CATEGORIES.index(category))
+                    G.add_edge(
+                        subject,
+                        object,
+                        label=relation,
+                        group=ALL_CATEGORIES.index(category),
+                    )
     colored_dict = nx.get_node_attributes(G, "color")
     color_seq = [colored_dict.get(node, "blue") for node in G.nodes()]
     pos = nx.spring_layout(G, scale=2)
     nx.draw(G, pos, with_labels=True, node_color=color_seq)
 
     net = Network(notebook=True, height="1000px", width="1000px", directed=True)
-    nx.write_gpickle(G, "5labels.gpickle")
+    nx.write_gpickle(G, "allLabels.gpickle")
     net.from_nx(G)
-    net.show("5labels.html")
+    net.show("allLabels.html")
 
     # plt.show()
 
