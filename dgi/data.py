@@ -60,5 +60,5 @@ def create_dglgraph(path, sent_encoder, bidirection=True):
     nfeats = torch.tensor(nfeats)
 
     assert dglG.num_nodes() == len(nfeats)
-    print(nfeats.shape)
+    print()
     return dglG, nfeats, nsents

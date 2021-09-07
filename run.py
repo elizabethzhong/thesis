@@ -90,7 +90,7 @@ def loadGraph():
 
 
 if __name__ == "__main__":
-    bertEmbedding("Hi there how are you")
+    visuliseKnowledgeGraph()
 
     """
     data = getData()
