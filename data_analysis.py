@@ -4,6 +4,7 @@ from sklearn.manifold import TSNE
 import random
 from process_dataset import getData
 from relation_extraction import extractTriplesCoreNLP
+from unsupervisedClustering import clusterTuples
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
@@ -22,6 +23,7 @@ import dgl
 
 # Load pre-trained model tokenizer (vocabulary)
 tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+random.seed(2020)
 
 # word embeddings of a sentence using BERT
 # returns sum of last four layers
@@ -73,9 +75,6 @@ def bertEmbedding(text=""):
         print(word_embed_6.shape)
 
     return word_embed_6
-
-
-# visualises the first subject of a relation and plots the word embeddings
 
 
 def visualise():
@@ -132,8 +131,35 @@ def visualise():
 
 
 def visuliseKnowledgeGraph():
-    lemmatizer = WordNetLemmatizer()
     G = nx.DiGraph()
+    tuples = getAllTuples()
+    for tup in tuples:
+        # G.add_nodes_from(nodes, color=colors[CATEGORIES.index(category)])
+        G.add_node(tup["tuple"]["subject"], group=ALL_CATEGORIES.index(tup["label"]))
+        G.add_node(tup["tuple"]["object"], group=ALL_CATEGORIES.index(tup["label"]))
+        G.add_edge(
+            tup["tuple"]["subject"],
+            tup["tuple"]["object"],
+            label=tup["tuple"]["relation"],
+            sentence=tup["sentence"],
+            group=ALL_CATEGORIES.index(tup["label"]),
+        )
+    colored_dict = nx.get_node_attributes(G, "color")
+    color_seq = [colored_dict.get(node, "blue") for node in G.nodes()]
+    pos = nx.spring_layout(G, scale=2)
+    nx.draw(G, pos, with_labels=True, node_color=color_seq)
+
+    # net = Network(notebook=True, height="1000px", width="1000px", directed=True)
+    nx.write_gpickle(G, "allLabels10Clusters.gpickle")
+    # net.from_nx(G)
+    # net.show("allLabelsNoFilter.html")
+
+    # plt.show()
+
+
+def getAllTuples():
+    lemmatizer = WordNetLemmatizer()
+    tuples = []
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
         for category in ALL_CATEGORIES:
             print("Test")
@@ -141,90 +167,115 @@ def visuliseKnowledgeGraph():
             for sentence in data:
                 if (triples := extractTriplesCoreNLP(client, sentence)) == []:
                     continue
+                flag = False
                 for triple in triples:
                     (subject, relation, object) = triple
                     subject = subject.lower()
                     relation = relation.lower()
                     object = object.lower()
+
                     if subject == "agreement":
                         continue
+
+                    tupleDict = {}
                     # only include triples with relations in top 10
-                    """
                     if any(
                         item in lemmatise(relation, lemmatizer)
                         for item in TOP10RELATIONS[category]
                     ):
-                    """
-                    # G.add_nodes_from(nodes, color=colors[CATEGORIES.index(category)])
-                    G.add_node(subject, group=ALL_CATEGORIES.index(category))
-                    G.add_node(object, group=ALL_CATEGORIES.index(category))
-                    G.add_edge(
-                        subject,
-                        object,
-                        label=relation,
-                        group=ALL_CATEGORIES.index(category),
-                    )
-    colored_dict = nx.get_node_attributes(G, "color")
-    color_seq = [colored_dict.get(node, "blue") for node in G.nodes()]
-    pos = nx.spring_layout(G, scale=2)
-    nx.draw(G, pos, with_labels=True, node_color=color_seq)
+                        flag = True
+                        tupleDict["tuple"] = {
+                            "subject": subject,
+                            "relation": relation,
+                            "object": object,
+                        }
+                        tupleDict["sentence"] = sentence
+                        tupleDict["label"] = category
+                        tuples.append(tupleDict)
 
-    net = Network(notebook=True, height="1000px", width="1000px", directed=True)
-    nx.write_gpickle(G, "allLabels.gpickle")
-    net.from_nx(G)
-    net.show("allLabels.html")
+                if flag == False:
+                    randomTriple = triples[0]
+                    (subject, relation, object) = randomTriple
+                    subject = subject.lower()
+                    relation = relation.lower()
+                    object = object.lower()
 
-    # plt.show()
+                    tupleDict["tuple"] = {
+                        "subject": subject,
+                        "relation": relation,
+                        "object": object,
+                    }
+                    tupleDict["sentence"] = sentence
+                    tupleDict["label"] = category
+                    tuples.append(tupleDict)
+                    flag = True
+
+    # Cluster words into separate entities
+
+    for word in ["party", "agreement", "term"]:
+        frequentTuples = [
+            x
+            for x in tuples
+            if x["tuple"]["subject"] == word or x["tuple"]["object"] == word
+        ]
+        tuples = [
+            x
+            for x in tuples
+            if x["tuple"]["subject"] != word and x["tuple"]["object"] != word
+        ]
+        test = clusterTuples(word, frequentTuples)
+        print(test)
+        tuples = tuples + test
+
+    return tuples
 
 
 def frequencyGraph(category="Expiration Date"):
     # Load lemmatiser
     lemmatizer = WordNetLemmatizer()
-    f = open("./bestRelations.txt", "w")
+    # f = open("./bestRelations.txt", "w")
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
-        for category in CATEGORIES:
+        allData = []
+        for category in ALL_CATEGORIES:
             data = getData(category)
-            allData = []
             for sentence in data:
                 if (triples := extractTriplesCoreNLP(client, sentence)) == []:
                     continue
                 for triple in triples:
                     (subject, relation, object) = triple
-                    allData.append(lemmatise(relation.lower(), lemmatizer))
-            translator = str.maketrans("", "", punctuation)
-            linewords = (
-                sentence.translate(translator).lower().split() for sentence in allData
-            )
-            frequency = Counter(chain.from_iterable(linewords))
-            extraStopwords = stopwords.words() + ["may", "shall"]
-            newdict = {k: frequency[k] for k in frequency if k not in extraStopwords}
-            frequencyDictWithoutStopwords = {
-                k: v
-                for k, v in sorted(
-                    newdict.items(), key=lambda item: item[1], reverse=True
-                )
-            }
-            first10Words = list(frequencyDictWithoutStopwords.items())[:10]
+                    allData.append(lemmatise(subject.lower(), lemmatizer))
+                    allData.append(lemmatise(object.lower(), lemmatizer))
+        translator = str.maketrans("", "", punctuation)
+        linewords = (
+            sentence.translate(translator).lower().split() for sentence in allData
+        )
+        frequency = Counter(chain.from_iterable(linewords))
+        extraStopwords = stopwords.words() + ["may", "shall"]
+        newdict = {k: frequency[k] for k in frequency if k not in extraStopwords}
+        frequencyDictWithoutStopwords = {
+            k: v
+            for k, v in sorted(newdict.items(), key=lambda item: item[1], reverse=True)
+        }
+        first10Words = list(frequencyDictWithoutStopwords.items())[:10]
 
-            f.write(category + str(first10Words) + "\n")
-            indices = np.arange(len(first10Words))
-            plt.bar(indices, list(map(lambda x: x[1], first10Words)), color="b")
-            plt.xticks(
-                indices, list(map(lambda x: x[0], first10Words)), rotation="vertical"
-            )
-            plt.tight_layout()
-            plt.title(
-                "'"
-                + category.replace("/", "-")
-                + "' Relation Frequency Histogram (Top 10)"
-            )
-            plt.savefig(
-                "./graphs/relation/" + category.replace("/", "-") + "Relation.png"
-            )
-    f.close()
+        # f.write(category + str(first10Words) + "\n")
+        indices = np.arange(len(first10Words))
+        plt.bar(indices, list(map(lambda x: x[1], first10Words)), color="b")
+        plt.xticks(
+            indices, list(map(lambda x: x[0], first10Words)), rotation="vertical"
+        )
+        plt.tight_layout()
+        plt.title(
+            "'" + category.replace("/", "-") + "' Relation Frequency Histogram (Top 10)"
+        )
+        plt.show()
+        # plt.savefig(
+        #    "./graphs/relation/" + category.replace("/", "-") + "Relation.png"
+        # )
+    # f.close()
 
 
-def lemmatise(phrase, client):
+def lemmatise(phrase, client=WordNetLemmatizer()):
     word_list = nltk.word_tokenize(phrase)
     lemmatised = " ".join([client.lemmatize(w) for w in word_list])
     return lemmatised

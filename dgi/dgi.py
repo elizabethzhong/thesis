@@ -5,7 +5,7 @@ Papers: https://arxiv.org/abs/1809.10341
 import math
 import torch
 from torch import nn
-from gcn import GCN
+from dgi.gcn import GCN
 
 
 class Encoder(nn.Module):
