@@ -20,7 +20,7 @@ def main():
 
     labels = ["Pfizer-BioNTec", "Moderna", "Gamaleya", "Oxford-AstraZenece", "J and J"]
 
-    gs_pk = ["../aboveAverageClass.gpickle"]
+    gs_pk = ["../allLabels.gpickle"]
 
     all_feats = []
     all_gs = []
@@ -45,7 +45,7 @@ def main():
 
     dgi_optimizer = torch.optim.Adam(dgi.parameters(), lr=1e-3, weight_decay=0.0)
 
-    dgi.load_state_dict(torch.load("aboveAverageClass.pkl"))
+    dgi.load_state_dict(torch.load("5labels.pkl"))
 
     G_sum = []
     X = []
@@ -94,23 +94,9 @@ def main():
     fig = plt.gcf()
     fig.set_size_inches(20, 15)
 
-    a = pd.concat({"x": df["x"], "y": df["y"], "val": pd.Series(all_sentences)}, axis=1)
-    j = 0
-    for i, point in a.iterrows():
-        if j % 5 == 0:
-            plt.text(
-                point["x"] + 0.01,
-                point["y"],
-                point["val"],
-                horizontalalignment="left",
-                size="small",
-                color="black",
-            )
-
-        j = j + 1
     plt.show()
 
-    plt.savefig("aboveAverageClass.png")
+    plt.savefig("allLabelEmbeddings.png")
 
 
 if __name__ == "__main__":

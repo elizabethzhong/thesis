@@ -1,11 +1,13 @@
 from stanza.server.client import CoreNLPClient
-from data import create_dglgraph
+from dgi.data import create_dglgraph
+from dgi.dgi import DGI
 import sys
 import dgl
 import numpy as np
 import torch
+from torch import nn
 import seaborn as sn
-from multiclass_classfication import MulticlassClassification
+from dgi.multiclass_classfication import MulticlassClassification
 from sentence_transformers import SentenceTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelBinarizer
@@ -17,23 +19,25 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 import matplotlib.pyplot as plt
-
-
-# setting path
-sys.path.append("../")
-
 from constants import CATEGORIES, ALL_CATEGORIES, TOP10RELATIONS
 from process_dataset import preprocessData, getData
 from relation_extraction import extractTriplesCoreNLP
 from data_analysis import lemmatise
 
+torch.manual_seed(4)
+
 sent_encoder = SentenceTransformer("paraphrase-distilroberta-base-v1")
 
 
 def main(args):
-    f_g = "../allLabelsClustered.gpickle"
-    X_tuple, y_tuple = getGraphDataset(f_g)
-    # X_tuple, y_tuple = getSentenceDataset()
+    f_g = "./allLabelsFirstTriple.gpickle"
+    X_tuple, y_tuple = getSentenceDataset()
+
+    """
+    testTuples = getTestTuples()
+    X_tuple, y_tuple, embeddings = getGraphDataset(f_g, testTuples)
+    """
+
     X_train_sent, X_test_sent, y_train, y_test = train_test_split(
         X_tuple,
         y_tuple,
@@ -42,16 +46,49 @@ def main(args):
         random_state=123,
         shuffle=True,
     )
+
+    tupleDict = getTupleDict(f_g)
+
     X_train, sent_Train = zip(*X_train_sent)
     X_test, sent_Test = zip(*X_test_sent)
-    X_train = torch.stack(list(X_train), dim=0)
-    X_test = torch.stack(list(X_test), dim=0)
+
+    X_train_set = []
+    y_train_set = []
+    X_test_set = []
+    y_test_set = []
+
+    for idx, sentence in enumerate(sent_Train):
+        embed_train = X_train[idx]
+        label = y_train[idx]
+        if sentence in tupleDict:
+            for tup_embed in tupleDict[sentence]:
+                X_train_set.append(torch.cat([tup_embed, embed_train], dim=0))
+                y_train_set.append(label)
+        else:
+            X_train_set.append(torch.cat([torch.zeros(1024), embed_train], dim=0))
+            y_train_set.append(label)
+
+    for idx, sentence in enumerate(sent_Test):
+        embed_test = X_test[idx]
+        label = y_test[idx]
+        if sentence in tupleDict:
+            for tup_embed in tupleDict[sentence]:
+                X_test_set.append(torch.cat([tup_embed, embed_test], dim=0))
+                y_test_set.append(label)
+        else:
+            X_test_set.append(torch.cat([torch.zeros(1024), embed_test], dim=0))
+            y_test_set.append(label)
+
+    X_train = torch.stack(list(X_train_set), dim=0)
+    X_test = torch.stack(list(X_test_set), dim=0)
+    y_train = torch.tensor(y_train_set, dtype=torch.long)
+    y_test = torch.tensor(y_test_set, dtype=torch.long)
 
     batch_size = 100
-    n_iters = 25000
+    n_iters = 75000
     epochs = n_iters / (len(X_train) / batch_size)
     output_dim = 41
-    input_dim = 768
+    input_dim = 1792
     lr_rate = 0.001
 
     model = MulticlassClassification(num_feature=input_dim, num_class=output_dim)
@@ -92,15 +129,7 @@ def main(args):
             accuracy = 100 * correct2 / len(X_test)
             print("Test Accuracy: {}.".format(accuracy))
 
-    """
-    # Evalutate test tuple
-    for tup in testTuples:
-        subject_embed = embeddings[tup[0]]
-        object_embed = embeddings[tup[1]]
-        output1 = model(torch.cat([subject_embed, object_embed]))
-        predicted1 = torch.argmax(output1.data)
-        print(f"The predicted class is: {ALL_CATEGORIES[predicted1]}")
-    """
+    # evaluateTestSentence(embeddings, model, testTuples)
 
     accuracyDict = {}
     predProbaList = torch.empty(size=(len(X_test), output_dim))
@@ -108,23 +137,14 @@ def main(args):
 
     nxG = nx.read_gpickle(f_g)
     for i in range(len(X_test)):
-        sent = sent_Test[i]
         outputs = model(X_test[i])
         predicted = torch.argmax(outputs.data)
         predProbaList[i] = outputs.data
         predlist = torch.cat([predlist, predicted.view(-1).cpu()])
         if y_test[i].item() in accuracyDict:
             accuracyDict[y_test[i].item()].append(predicted == y_test[i])
-            if predicted == y_test[i]:
-                nxG.add_node(sent, size=30)
-            else:
-                nxG.add_node(sent, size=20)
         else:
             accuracyDict[y_test[i].item()] = [predicted == y_test[i]]
-            if predicted == y_test[i]:
-                nxG.add_node(sent, size=30)
-            else:
-                nxG.add_node(sent, size=20)
     for label in accuracyDict:
         accuracyDict[label] = accuracyDict[label].count(True) / len(accuracyDict[label])
     for k, v in sorted(accuracyDict.items(), key=lambda x: x[1]):
@@ -143,21 +163,21 @@ def main(args):
 def getSentenceDataset():
     X_tuple = []
     y_tuple = []
-    for category in ALL_CATEGORIES:
-        data = getData(category)
+    for idx, category in enumerate(ALL_CATEGORIES):
+        data = getData(category, clean=True)
         for sentence in data:
             feat = sent_encoder.encode(sentence)
+            feat = torch.tensor(feat)
             X_tuple.append((feat, sentence))
-            y_tuple.append(category)
+            y_tuple.append(idx)
+
+    y_tuple = torch.tensor(y_tuple, dtype=torch.long)
     return X_tuple, y_tuple
 
 
-def getGraphDataset(f_g):
-    g, features, sent = create_dglgraph(f_g, sent_encoder)
-    g = dgl.add_self_loop(g)
-
-    testSentence = "Neither party may assign this Agreement without the written consent of the other party save in the case where such assignment is to an EM Affiliate and prior written notice has been given to the Buyer."
-    category = "Anti-Assignment"
+def getTestTuples():
+    testSentence = "Hence, as of the Distribution Date, SpinCo hereby grants, and agrees to cause the members of the SpinCo Group to hereby grant, to Honeywell and the members of the Honeywell Group a non-exclusive, royalty-free, fully-paid, perpetual, sublicenseable (solely to Subsidiaries and suppliers for 'have made' purposes), worldwide license to use and exercise rights under the SpinCo Shared IP (excluding Trademarks and the subject matter of any other Ancillary Agreement), said license being limited to use of a similar type, scope and extent as used in the Honeywell Business prior to the Distribution Date and the natural growth and development thereof."
+    category = "Affiliate License-Licensee"
     testSentence = preprocessData(testSentence)
     testTuples = []
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
@@ -175,36 +195,93 @@ def getGraphDataset(f_g):
             if any(item in lemmatise(relation) for item in TOP10RELATIONS[category]):
                 testTuples.append((subject, object))
                 flag = True
+    print(testTuples)
+    return testTuples
+
+
+def evaluateTestSentence(embeddings, model, testTuples):
+    # Evalutate test tuple
+    for tup in testTuples:
+        subject_embed = embeddings[tup[0]]
+        object_embed = embeddings[tup[1]]
+        output1 = model(torch.cat([subject_embed, object_embed]))
+        predicted1 = torch.argmax(output1.data)
+        print(f"The predicted class is: {ALL_CATEGORIES[predicted1]}")
+
+
+def getTupleDict(f_g):
+    g, features, node_names = create_dglgraph(f_g, sent_encoder)
+    g = dgl.add_self_loop(g)
+
+    dgi = DGI(features.shape[1], 512, 1, nn.PReLU(512), 0)
+
+    dgi.load_state_dict(torch.load("dgi/allLabelsFirstTriple.pkl"))
+
+    embeds = dgi.encoder(g, features, corrupt=False).detach()
+
+    embeddings = dict(zip(node_names, embeds))
+    tupleDict = {}
+    nxG = nx.read_gpickle(f_g)
+    for link in nxG.edges(data=True):
+        sentence = link[2]["sentence"]
+        subject_embed = embeddings[link[0]]
+        object_embed = embeddings[link[1]]
+        if sentence in tupleDict:
+            tupleDict[sentence].append(torch.cat([subject_embed, object_embed], dim=0))
+        else:
+            tupleDict[sentence] = [torch.cat([subject_embed, object_embed], dim=0)]
+
+    return tupleDict
+
+
+def getGraphDataset(f_g, testTuples=None):
+    g, features, sent = create_dglgraph(f_g, sent_encoder)
+    g = dgl.add_self_loop(g)
+
+    dgi = DGI(features.shape[1], 512, 1, nn.PReLU(512), 0)
+    # dgi = dgi.to(gpu)
+
+    dgi_optimizer = torch.optim.Adam(dgi.parameters(), lr=1e-3, weight_decay=0.0)
+
+    dgi.load_state_dict(torch.load("dgi/allLabelsFirstTriple.pkl"))
+
+    embeds = dgi.encoder(g, features, corrupt=False).detach()
+
     # relation classifications
     # 1) get pairs based on edges
     # 2) find subject and object nodes from embeddings
     # 3) set class as object node class -> more likely to be the correct class
     # 4) join together and then train
-    embeddings = dict(zip(sent, features))
+    embeddings = dict(zip(sent, embeds))
     classes = dict(zip(sent, g.ndata["group"]))
     X_tuple = []
     y_tuple = []
     nxG = nx.read_gpickle(f_g)
     for link in nxG.edges(data=True):
         label = link[2]["group"]
+        sentence_embed = sent_encoder.encode(link[2]["sentence"])
         subject_embed = embeddings[link[0]]
         object_embed = embeddings[link[1]]
+
         # if it's the exception then ignore
-        if (link[0], link[1]) in testTuples:
+        if testTuples and (link[0], link[1]) in testTuples:
             print("Found relation")
             continue
-        X_tuple.append((torch.cat([subject_embed, object_embed]), link[1]))
+        X_tuple.append(
+            (
+                torch.cat(
+                    [subject_embed, object_embed, torch.tensor(sentence_embed)], dim=0
+                ),
+                link[1],
+            )
+        )
 
         # assign class of tuple to object
         y_tuple.append(label)
 
     y_tuple = torch.tensor(y_tuple, dtype=torch.long)
 
-    # node classifications
-
-    # X = list(zip(g.ndata["val"], sent))
-    # y = g.ndata["group"]
-    return X_tuple, y_tuple
+    return X_tuple, y_tuple, embeddings
 
 
 def plotPrecisionAt80Recall(labels, precision):
@@ -217,6 +294,7 @@ def plotPrecisionAt80Recall(labels, precision):
     ax.set_yticks(np.arange(len(sortedLabels)))
     ax.set_yticklabels(sortedLabels)
     ax.invert_yaxis()  # labels read top-to-bottom
+    ax.set_xlim([0, 1.0])
     ax.set_xlabel("Precision at 80% recall")
     # ax.set_ylim([0, 1])
     plt.show()

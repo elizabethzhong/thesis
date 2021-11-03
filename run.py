@@ -9,6 +9,7 @@ from data_analysis import (
     visuliseKnowledgeGraph,
     frequencyGraph,
     bertEmbedding,
+    getAllTuples,
 )
 from stanza.server import CoreNLPClient
 import networkx as nx

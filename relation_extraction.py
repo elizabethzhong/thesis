@@ -13,7 +13,7 @@ def isRelationCandidate(token):
 
 def subtree_matcher(text):
     subjpass = 0
-    relation = ''
+    relation = ""
     nlp = spacy.load("en_core_web_sm")
 
     relationTuples = []
@@ -25,10 +25,10 @@ def subtree_matcher(text):
             subjpass = 1
 
         if isRelationCandidate(tok):
-            relation += tok.text + ' '
+            relation += tok.text + " "
 
-    x = ''
-    y = ''
+    x = ""
+    y = ""
 
     # if subjpass == 1 then sentence is passive
     if subjpass == 1:
@@ -50,33 +50,42 @@ def subtree_matcher(text):
 
     return x, relation, y
 
+
 # Unsupervised relation extraction using Stanza (CoreNLP)
 
 
 def extractTriplesCoreNLP(client, text):
     triples = []
-    ann = client.annotate(text, properties={"openie.triple.strict": "true", "openie.format" : "qa_srl"})
+    ann = client.annotate(
+        text, properties={"openie.triple.strict": "true", "openie.format": "qa_srl"}
+    )
     for sentence in ann.sentence:
         for triple in sentence.openieTriple:
-            tripleUnpacked = MessageToDict(
-                triple, preserving_proto_field_name=True)
+            tripleUnpacked = MessageToDict(triple, preserving_proto_field_name=True)
             triples.append(
-                (triple.subject, triple.relation, triple.object, tripleUnpacked["subjectTokens"][0]['tokenIndex']))
+                (
+                    triple.subject,
+                    triple.relation,
+                    triple.object,
+                    tripleUnpacked["subjectTokens"][0]["tokenIndex"],
+                )
+            )
 
     return filterBestTriples(triples)
 
+
 def filterBestTriples(triples):
-    #Group triples with the same subject and relation
+    # Group triples with the same subject and relation
     groups = defaultdict(list)
     bestTriples = []
 
     for triple in triples:
-        subRel = (triple[0],triple[1])
+        subRel = (triple[0], triple[1])
         groups[subRel].append(triple[2])
 
-    for pair, objectList in groups.items(): 
+    for pair, objectList in groups.items():
         subject, relation = pair
-        objectList.sort(key = len, reverse = True)
+        objectList.sort(key=len, reverse=True)
         object = objectList[0]
         bestTriples.append((subject, relation, object))
     return bestTriples

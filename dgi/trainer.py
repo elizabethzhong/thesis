@@ -13,7 +13,7 @@ sent_encoder = SentenceTransformer("paraphrase-distilroberta-base-v1")
 
 
 def main(args):
-    gs_pk = ["../5labels.gpickle"]
+    gs_pk = ["../allLabels10Clusters.gpickle"]
 
     gpu = 0
     # torch.cuda.set_device(gpu)
@@ -65,7 +65,7 @@ def main(args):
             best = loss
             best_t = epoch
             cnt_wait = 0
-            torch.save(dgi.state_dict(), "5labels.pkl")
+            torch.save(dgi.state_dict(), "allLabels10Clusters.pkl")
         else:
             cnt_wait += 1
 
