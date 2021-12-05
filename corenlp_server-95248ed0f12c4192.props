@@ -1,0 +1,4 @@
+annotators = openie
+
+outputFormat = serialized
+
