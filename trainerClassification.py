@@ -1,28 +1,28 @@
-from stanza.server.client import CoreNLPClient
-from dgi.data import create_dglgraph
-from dgi.dgi import DGI
-import sys
 import dgl
-import numpy as np
-import torch
-from torch import nn
-import seaborn as sn
-from dgi.multiclass_classfication import MulticlassClassification
-from sentence_transformers import SentenceTransformer
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelBinarizer
+import matplotlib.pyplot as plt
 import networkx as nx
-from pyvis.network import Network
+import numpy as np
+import seaborn as sn
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics import (
     precision_recall_curve,
     average_precision_score,
     confusion_matrix,
+    PrecisionRecallDisplay,
 )
-import matplotlib.pyplot as plt
-from constants import CATEGORIES, ALL_CATEGORIES, TOP10RELATIONS
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelBinarizer
+from stanza.server.client import CoreNLPClient
+import torch
+from torch import nn
+
+from constants import ALL_CATEGORIES, TOP10RELATIONS
+from data_analysis import lemmatise
+from dgi.data import create_dglgraph
+from dgi.dgi import DGI
+from dgi.multiclass_classfication import MulticlassClassification
 from process_dataset import preprocessData, getData
 from relation_extraction import extractTriplesCoreNLP
-from data_analysis import lemmatise
 
 torch.manual_seed(4)
 
@@ -30,13 +30,12 @@ sent_encoder = SentenceTransformer("paraphrase-distilroberta-base-v1")
 
 
 def main(args):
-    f_g = "./allLabelsFirstTriple.gpickle"
-    X_tuple, y_tuple = getSentenceDataset()
+    f_g = "./CUADKnowledgeGraph.gpickle"
+    modelPath = "CUADKnowledgeGraphModel.pth"
 
-    """
-    testTuples = getTestTuples()
-    X_tuple, y_tuple, embeddings = getGraphDataset(f_g, testTuples)
-    """
+    print("Organising dataset...")
+
+    X_tuple, y_tuple = getSentenceDataset()
 
     X_train_sent, X_test_sent, y_train, y_test = train_test_split(
         X_tuple,
@@ -47,48 +46,80 @@ def main(args):
         shuffle=True,
     )
 
-    tupleDict = getTupleDict(f_g)
-
     X_train, sent_Train = zip(*X_train_sent)
     X_test, sent_Test = zip(*X_test_sent)
+    use_tuple = True
+    if use_tuple:
+        tupleDict = getTupleDict(f_g)
+        X_train_set = []
+        y_train_set = []
+        X_test_set = []
+        y_test_set = []
+        X_train_set_info = []
+        X_test_set_info = []
 
-    X_train_set = []
-    y_train_set = []
-    X_test_set = []
-    y_test_set = []
+        for idx, sentence in enumerate(sent_Train):
+            embed_train = X_train[idx]
+            label = y_train[idx]
+            if sentence in tupleDict:
+                for tup in tupleDict[sentence]:
+                    tup_embed = tup["embedding"]
+                    X_train_set.append(torch.cat([tup_embed, embed_train], dim=0))
+                    X_train_set_info.append(
+                        {
+                            "sentence": sentence,
+                            "subject": tup["subject"],
+                            "object": tup["object"],
+                        }
+                    )
+                    y_train_set.append(label)
 
-    for idx, sentence in enumerate(sent_Train):
-        embed_train = X_train[idx]
-        label = y_train[idx]
-        if sentence in tupleDict:
-            for tup_embed in tupleDict[sentence]:
-                X_train_set.append(torch.cat([tup_embed, embed_train], dim=0))
+            else:
+                X_train_set.append(torch.cat([torch.zeros(1024), embed_train], dim=0))
+                X_train_set_info.append(
+                    {"sentence": sentence, "subject": None, "object": None}
+                )
                 y_train_set.append(label)
-        else:
-            X_train_set.append(torch.cat([torch.zeros(1024), embed_train], dim=0))
-            y_train_set.append(label)
 
-    for idx, sentence in enumerate(sent_Test):
-        embed_test = X_test[idx]
-        label = y_test[idx]
-        if sentence in tupleDict:
-            for tup_embed in tupleDict[sentence]:
-                X_test_set.append(torch.cat([tup_embed, embed_test], dim=0))
+        for idx, sentence in enumerate(sent_Test):
+            embed_test = X_test[idx]
+            label = y_test[idx]
+            if sentence in tupleDict:
+                for tup in tupleDict[sentence]:
+                    tup_embed = tup["embedding"]
+                    X_test_set.append(torch.cat([tup_embed, embed_test], dim=0))
+                    X_test_set_info.append(
+                        {
+                            "sentence": sentence,
+                            "subject": tup["subject"],
+                            "object": tup["object"],
+                        }
+                    )
+                    y_test_set.append(label)
+            else:
+                X_test_set.append(torch.cat([torch.zeros(1024), embed_test], dim=0))
+                X_test_set_info.append(
+                    {"sentence": sentence, "subject": None, "object": None}
+                )
                 y_test_set.append(label)
-        else:
-            X_test_set.append(torch.cat([torch.zeros(1024), embed_test], dim=0))
-            y_test_set.append(label)
 
-    X_train = torch.stack(list(X_train_set), dim=0)
-    X_test = torch.stack(list(X_test_set), dim=0)
-    y_train = torch.tensor(y_train_set, dtype=torch.long)
-    y_test = torch.tensor(y_test_set, dtype=torch.long)
+        X_train = torch.stack(list(X_train_set), dim=0)
+        X_test = torch.stack(list(X_test_set), dim=0)
+        y_train = torch.tensor(y_train_set, dtype=torch.long)
+        y_test = torch.tensor(y_test_set, dtype=torch.long)
 
-    batch_size = 100
-    n_iters = 75000
-    epochs = n_iters / (len(X_train) / batch_size)
+    else:
+        X_train = torch.stack(list(X_train), dim=0)
+        X_test = torch.stack(list(X_test), dim=0)
+
+    print("Training...")
+
+    epochs = 250
     output_dim = 41
-    input_dim = 1792
+    if use_tuple == True:
+        input_dim = 1792
+    else:
+        input_dim = 768
     lr_rate = 0.001
 
     model = MulticlassClassification(num_feature=input_dim, num_class=output_dim)
@@ -129,13 +160,16 @@ def main(args):
             accuracy = 100 * correct2 / len(X_test)
             print("Test Accuracy: {}.".format(accuracy))
 
-    # evaluateTestSentence(embeddings, model, testTuples)
+    torch.save(model.state_dict(), modelPath)
+    print(f"Model saved at: {modelPath}")
+
+    print("Evaluating...")
 
     accuracyDict = {}
     predProbaList = torch.empty(size=(len(X_test), output_dim))
     predlist = torch.zeros(0, dtype=torch.long, device="cpu")
 
-    nxG = nx.read_gpickle(f_g)
+    # calculate accuracy for each class
     for i in range(len(X_test)):
         outputs = model(X_test[i])
         predicted = torch.argmax(outputs.data)
@@ -152,15 +186,15 @@ def main(args):
 
     cm = confusion_matrix(y_test.numpy(), predlist.numpy())
     sn.heatmap(cm, annot=True, cmap="YlGnBu")
-    # plt.show()
-    print(multiclass_roc_auc_score(y_test.numpy(), predProbaList.detach().numpy()))
 
-    net = Network(notebook=True, height="1000px", width="1000px", directed=True)
-    net.from_nx(nxG)
-    net.show("allLabels.html")
+    plotPrecisionRecall(
+        y_test.numpy(),
+        predProbaList.detach().numpy(),
+    )
 
 
 def getSentenceDataset():
+    """Generate X and y for sentence dataset"""
     X_tuple = []
     y_tuple = []
     for idx, category in enumerate(ALL_CATEGORIES):
@@ -175,9 +209,8 @@ def getSentenceDataset():
     return X_tuple, y_tuple
 
 
-def getTestTuples():
-    testSentence = "Hence, as of the Distribution Date, SpinCo hereby grants, and agrees to cause the members of the SpinCo Group to hereby grant, to Honeywell and the members of the Honeywell Group a non-exclusive, royalty-free, fully-paid, perpetual, sublicenseable (solely to Subsidiaries and suppliers for 'have made' purposes), worldwide license to use and exercise rights under the SpinCo Shared IP (excluding Trademarks and the subject matter of any other Ancillary Agreement), said license being limited to use of a similar type, scope and extent as used in the Honeywell Business prior to the Distribution Date and the natural growth and development thereof."
-    category = "Affiliate License-Licensee"
+def getTuplesFromSentence(testSentence, category):
+    """Get tuples from a specific sentence"""
     testSentence = preprocessData(testSentence)
     testTuples = []
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
@@ -200,7 +233,7 @@ def getTestTuples():
 
 
 def evaluateTestSentence(embeddings, model, testTuples):
-    # Evalutate test tuple
+    """Evalutate test tuple"""
     for tup in testTuples:
         subject_embed = embeddings[tup[0]]
         object_embed = embeddings[tup[1]]
@@ -210,12 +243,13 @@ def evaluateTestSentence(embeddings, model, testTuples):
 
 
 def getTupleDict(f_g):
+    """Organise tuples into a dictionary"""
     g, features, node_names = create_dglgraph(f_g, sent_encoder)
     g = dgl.add_self_loop(g)
 
     dgi = DGI(features.shape[1], 512, 1, nn.PReLU(512), 0)
 
-    dgi.load_state_dict(torch.load("dgi/allLabelsFirstTriple.pkl"))
+    dgi.load_state_dict(torch.load("./CUADKnowledgeGraphEmbeddings.pkl"))
 
     embeds = dgi.encoder(g, features, corrupt=False).detach()
 
@@ -227,31 +261,38 @@ def getTupleDict(f_g):
         subject_embed = embeddings[link[0]]
         object_embed = embeddings[link[1]]
         if sentence in tupleDict:
-            tupleDict[sentence].append(torch.cat([subject_embed, object_embed], dim=0))
+            tupleDict[sentence].append(
+                {
+                    "subject": link[0],
+                    "object": link[1],
+                    "embedding": torch.cat([subject_embed, object_embed], dim=0),
+                }
+            )
         else:
-            tupleDict[sentence] = [torch.cat([subject_embed, object_embed], dim=0)]
+            tupleDict[sentence] = [
+                {
+                    "subject": link[0],
+                    "object": link[1],
+                    "embedding": torch.cat([subject_embed, object_embed], dim=0),
+                }
+            ]
 
     return tupleDict
 
 
 def getGraphDataset(f_g, testTuples=None):
+    """Generate X and y for tuple dataset"""
     g, features, sent = create_dglgraph(f_g, sent_encoder)
     g = dgl.add_self_loop(g)
 
     dgi = DGI(features.shape[1], 512, 1, nn.PReLU(512), 0)
-    # dgi = dgi.to(gpu)
 
     dgi_optimizer = torch.optim.Adam(dgi.parameters(), lr=1e-3, weight_decay=0.0)
 
-    dgi.load_state_dict(torch.load("dgi/allLabelsFirstTriple.pkl"))
+    dgi.load_state_dict(torch.load("./CUADKnowledgeGraphEmbeddings.pkl"))
 
     embeds = dgi.encoder(g, features, corrupt=False).detach()
 
-    # relation classifications
-    # 1) get pairs based on edges
-    # 2) find subject and object nodes from embeddings
-    # 3) set class as object node class -> more likely to be the correct class
-    # 4) join together and then train
     embeddings = dict(zip(sent, embeds))
     classes = dict(zip(sent, g.ndata["group"]))
     X_tuple = []
@@ -285,6 +326,7 @@ def getGraphDataset(f_g, testTuples=None):
 
 
 def plotPrecisionAt80Recall(labels, precision):
+    """Plot precision at 80% recall"""
     sortedLabels = [x for _, x in sorted(zip(precision, labels), reverse=True)]
     sortedPrecisions = sorted(precision, reverse=True)
     fig, ax = plt.subplots()
@@ -300,26 +342,131 @@ def plotPrecisionAt80Recall(labels, precision):
     plt.show()
 
 
-def multiclass_roc_auc_score(y_test, y_pred, average="macro"):
+def multiclassROCAUCScore(y_test, y_pred, average="macro"):
+    """Plot PR curve separately for all categories"""
     fig, c_ax = plt.subplots(1, 1, figsize=(12, 8))
     lb = LabelBinarizer()
     lb.fit(y_test)
     y_test = lb.transform(y_test)
-    # y_pred = lb.transform(y_pred)
     precisionAt80 = []
-
     for (idx, c_label) in enumerate(ALL_CATEGORIES):
         fpr, tpr, thresholds = precision_recall_curve(
             y_test[:, idx].astype(int), y_pred[:, idx]
         )
         c_ax.plot(fpr, tpr, label=idx)
         precisionAt80.append(np.interp(0.8, fpr, tpr))
+
     plt.xlabel("recall")
     plt.ylabel("precision")
     plt.legend(loc="best")
     plt.show()
     plotPrecisionAt80Recall(ALL_CATEGORIES, precisionAt80)
     return average_precision_score(y_test, y_pred)
+
+
+def plotPrecisionRecall(y_test, y_pred):
+    """Plot PR curve overall"""
+    lb = LabelBinarizer()
+    lb.fit(y_test)
+    y_test = lb.transform(y_test)
+    precisions = []
+    recalls = []
+
+    # compute macro precision recall curve
+    for (idx, c_label) in enumerate(ALL_CATEGORIES):
+        precision_thresholds = []
+        recall_thresholds = []
+        fpr, tpr, thresholds = precision_recall_curve(
+            y_test[:, idx].astype(int), y_pred[:, idx]
+        )
+        for i in np.linspace(0, 1, 1001):
+            precision_thresholds.append(np.interp(i, fpr, tpr))
+            recall_thresholds.append(i)
+
+        precisions.append(precision_thresholds)
+        recalls.append(recall_thresholds)
+
+    precisions = np.array(precisions)
+    recalls = np.array(recalls)
+
+    average_precision = precisions.mean(axis=0)
+    average_recalls = recalls.mean(axis=0)
+
+    average = average_precision_score(y_test, y_pred)
+
+    display = PrecisionRecallDisplay(
+        precision=average_precision,
+        recall=average_recalls,
+        average_precision=average,
+    )
+    display.plot()
+    _ = display.ax_.set_title("Precision Recall Curve")
+    plt.show()
+    return average
+
+
+def runModel(sentence):
+    """Run model for a sentence"""
+    output_dim = 41
+    input_dim = 768
+
+    data = sent_encoder.encode(sentence)
+    data = torch.tensor(data)
+
+    model = MulticlassClassification(num_feature=input_dim, num_class=output_dim)
+
+    model.load_state_dict(torch.load("sentenceEmbeddings.pth"))
+
+    model.eval()
+    output = model(data)
+    prediction = torch.argmax(output)
+    print(prediction)
+
+
+def getConnectedTuples(node):
+    """Find all nodes connected to specified node"""
+    f_g = "./allLabelsFirstTriple.gpickle"
+    nxG = nx.read_gpickle(f_g)
+    print(nxG.in_edges(node, data=True))
+    print(nxG.out_edges(node, data=True))
+
+
+def evaluateModel(X_test, y_test):
+    """Evaluate model"""
+    output_dim = 41
+    input_dim = 768
+
+    model = MulticlassClassification(num_feature=input_dim, num_class=output_dim)
+
+    model.load_state_dict(torch.load("CUADKnowledgeGraphEmbeddings.pth"))
+
+    model.eval()
+
+    fig, c_ax = plt.subplots(1, 1, figsize=(12, 8))
+    accuracyDict = {}
+    predProbaList = torch.empty(size=(len(X_test), output_dim))
+    predlist = torch.zeros(0, dtype=torch.long, device="cpu")
+
+    for i in range(len(X_test)):
+        outputs = model(X_test[i])
+        predicted = torch.argmax(outputs.data)
+        predProbaList[i] = outputs.data
+        predlist = torch.cat([predlist, predicted.view(-1).cpu()])
+        if y_test[i].item() in accuracyDict:
+            accuracyDict[y_test[i].item()].append(predicted == y_test[i])
+        else:
+            accuracyDict[y_test[i].item()] = [predicted == y_test[i]]
+    for label in accuracyDict:
+        accuracyDict[label] = accuracyDict[label].count(True) / len(accuracyDict[label])
+    for k, v in sorted(accuracyDict.items(), key=lambda x: x[1]):
+        print(k, v)
+
+    cm = confusion_matrix(y_test.numpy(), predlist.numpy())
+    sn.heatmap(cm, annot=True, cmap="YlGnBu")
+    print(multiclassROCAUCScore(y_test.numpy(), predProbaList.detach().numpy()))
+
+    plotPrecisionRecall(c_ax, y_test.numpy(), predProbaList.detach().numpy())
+    plt.show()
 
 
 if __name__ == "__main__":

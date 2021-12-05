@@ -27,7 +27,6 @@ def graph_clean(G):
 
 def create_dglgraph(path, sent_encoder, bidirection=True):
     nxG = nx.read_gpickle(path)
-    # nxG = graph_clean(nxG)
 
     nx_nodes = nxG.nodes(data=True)
     labels = [n[1]["group"] for n in nx_nodes]

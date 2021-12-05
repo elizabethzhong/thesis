@@ -1,5 +1,4 @@
 import ast
-from constants import CATEGORIES
 from relation_extraction import filterBestTriples
 import pandas as pd
 from transformers import pipeline
@@ -11,7 +10,9 @@ nlp = pipeline("ner", aggregation_strategy="simple")
 
 
 def getData(category, clean=True):
+    """Extract data from dataset file"""
     filename = "./nerText/" + category.replace("/", "-").replace(" ", "") + ".txt"
+    print(f"Category: {category}")
     if not clean:
         return getDataFromCSV(category)
     else:
@@ -25,6 +26,7 @@ def getData(category, clean=True):
 
 
 def getDataFromCSV(category="Expiration Date"):
+    """Extract data directly from the CUAD csv"""
     data = []
     df = pd.read_csv(DATA_PATH, header=0)
     categoryList = df[category].tolist()
@@ -38,6 +40,7 @@ def getDataFromCSV(category="Expiration Date"):
 
 
 def cleanData(filename, sentenceList):
+    """Clean data and put into a file to be loaded later"""
     f = open(filename, "w")
     data = []
     sentences = ast.literal_eval(sentenceList)
@@ -50,6 +53,7 @@ def cleanData(filename, sentenceList):
 
 
 def getCleanedData(category):
+    """Get the cleaned data for a particular category"""
     filename = "./nerText/" + category.replace("/", "-").replace(" ", "") + ".txt"
     f = open(filename, "r")
     lines = f.readlines()
@@ -58,6 +62,7 @@ def getCleanedData(category):
 
 
 def nameEntityRecognition(sentence):
+    """Resolve entity names using NER"""
     entities = nlp(sentence)
     filteredLocEntities = list(filter(lambda x: x["entity_group"] == "LOC", entities))
     filteredOrgEntities = list(filter(lambda x: x["entity_group"] == "ORG", entities))
@@ -69,6 +74,7 @@ def nameEntityRecognition(sentence):
 
 
 def preprocessData(sentence):
+    """Preprocess text"""
     # remove excess white space
     sentence = " ".join(sentence.split())
     # remove organisation name and location noise

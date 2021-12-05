@@ -3,15 +3,13 @@ from google.protobuf.json_format import MessageToDict
 from collections import defaultdict
 
 
-# Rule based supervised relation extraction using Spacy
-
-
 def isRelationCandidate(token):
     deps = ["ROOT", "adj", "attr", "agent", "amod"]
     return any(subs in token.dep_ for subs in deps)
 
 
 def subtree_matcher(text):
+    """Rule based supervised relation extraction using Spacy"""
     subjpass = 0
     relation = ""
     nlp = spacy.load("en_core_web_sm")
@@ -51,10 +49,8 @@ def subtree_matcher(text):
     return x, relation, y
 
 
-# Unsupervised relation extraction using Stanza (CoreNLP)
-
-
 def extractTriplesCoreNLP(client, text):
+    """Unsupervised relation extraction using Stanford CoreNLP"""
     triples = []
     ann = client.annotate(
         text, properties={"openie.triple.strict": "true", "openie.format": "qa_srl"}
@@ -75,6 +71,7 @@ def extractTriplesCoreNLP(client, text):
 
 
 def filterBestTriples(triples):
+    """Filter extracted triples to the best few"""
     # Group triples with the same subject and relation
     groups = defaultdict(list)
     bestTriples = []

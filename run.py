@@ -1,71 +1,31 @@
 import random
-import spacy
 from spacy.lang.en import English
 from spacy import displacy
 from process_dataset import getData
 from relation_extraction import subtree_matcher, extractTriplesCoreNLP
 from data_analysis import (
-    visualise,
-    visuliseKnowledgeGraph,
+    visualiseEmbeddings,
+    generateKnowledgeGraph,
     frequencyGraph,
     bertEmbedding,
     getAllTuples,
 )
 from stanza.server import CoreNLPClient
 import networkx as nx
+from pyvis.network import Network
+from constants import ALL_CATEGORIES
 
 
 def getSentences(text):
+    """Tokenise a sentence"""
     nlp = English()
     nlp.add_pipe("sentencizer")
     document = nlp(text)
     return [sent.text.strip() for sent in document.sents]
 
 
-def appendChunk(original, chunk):
-    return original + " " + chunk
-
-
-def isRelationCandidate(token):
-    deps = ["ROOT", "adj", "attr", "agent", "amod"]
-    return any(subs in token.dep_ for subs in deps)
-
-
-def isConstructionCandidate(token):
-    deps = ["compound", "prep", "conj", "mod"]
-    return any(subs in token.dep_ for subs in deps)
-
-
-def processSubjectObjectPairs(tokens):
-    subject = ""
-    object = ""
-    relation = ""
-    subjectConstruction = ""
-    objectConstruction = ""
-    for token in tokens:
-        if "punct" in token.dep_:
-            continue
-        if isRelationCandidate(token):
-            relation = appendChunk(relation, token.lemma_)
-        if isConstructionCandidate(token):
-            if subjectConstruction:
-                subjectConstruction = appendChunk(subjectConstruction, token.text)
-            if objectConstruction:
-                objectConstruction = appendChunk(objectConstruction, token.text)
-        if "subj" in token.dep_:
-            subject = appendChunk(subject, token.text)
-            subject = appendChunk(subjectConstruction, subject)
-            subjectConstruction = ""
-        if "obj" in token.dep_:
-            object = appendChunk(object, token.text)
-            object = appendChunk(objectConstruction, object)
-            objectConstruction = ""
-
-    return (subject.strip(), relation.strip(), object.strip())
-
-
 def evaluateModels():
-    # Get 9 different extracts
+    """Compare tuples extracted from Spacy and CoreNLP"""
     categories = ["Expiration Date"]
     with CoreNLPClient(annotators=["openie"], be_quiet=True) as client:
         for category in categories:
@@ -83,6 +43,7 @@ def evaluateModels():
 
 
 def loadGraph():
+    """Load previously saved graph"""
     path = "./filtered10Relations.gpickle"
     G = nx.read_gpickle(path)
     nx_nodes = G.nodes(data=True)
@@ -90,21 +51,27 @@ def loadGraph():
         print(n)
 
 
-if __name__ == "__main__":
-    visuliseKnowledgeGraph()
+def modifyGraph():
+    """Modify previously saved graph"""
+    f_g = "./allLabelsFirstTriple.gpickle"
+    nxG = nx.read_gpickle(f_g)
+    for link in nxG.edges(data=True):
+        label = ALL_CATEGORIES[link[2]["group"]]
+        print(label)
+        if (
+            label == "Ip Ownership Assignment"
+            or label == "Third Party Beneficiary"
+            or label == "Volume Restriction"
+        ):
+            nxG.add_node(link[0], size=30)
+            nxG.add_node(link[1], size=30)
+        else:
+            nxG.add_node(link[0], size=0)
+            nxG.add_node(link[1], size=0)
+    net = Network(notebook=True, height="1000px", width="1000px", directed=True)
+    net.from_nx(nxG)
+    net.show("allLabelsModified.html")
 
-    """
-    data = getData()
-    text = 'San Francisco considers banning sidewalk delivery robots'
-    sentences = getSentences(text)
-    for sentence in sentences:
-        print(sentence)
-        print("Spacy:")
-        print(subtree_matcher(sentence))
-        print("CoreNLP:")
-        triples = extractTriplesCoreNLP(sentence)
-        for triple in triples:
-            print(triple)
-        print("AllenNLP:")
-        print(extractTriplesAllenNLP())
-    """
+
+if __name__ == "__main__":
+    generateKnowledgeGraph()

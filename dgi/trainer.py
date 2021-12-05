@@ -1,7 +1,6 @@
-from data import create_dglgraph
+from dgi.data import create_dglgraph
 import dgl
-from dgi import DGI
-import itertools
+from dgi.dgi import DGI
 import time
 import numpy as np
 import torch
@@ -13,10 +12,8 @@ sent_encoder = SentenceTransformer("paraphrase-distilroberta-base-v1")
 
 
 def main(args):
-    gs_pk = ["../allLabels10Clusters.gpickle"]
-
-    gpu = 0
-    # torch.cuda.set_device(gpu)
+    gs_pk = ["CUADKnowledgeGraph.gpickle"]
+    savePath = "CUADKnowledgeGraphEmbeddings.pkl"
 
     all_feats = []
     all_gs = []
@@ -24,17 +21,12 @@ def main(args):
         g, features, _ = create_dglgraph(f_g, sent_encoder)
         g = dgl.add_self_loop(g)
 
-        # features = features.to(gpu)
-        # g = g.to(gpu)
-
         all_gs.append(g)
         all_feats.append(features)
 
-    # g_pairs = list(itertools.combinations(range(len(all_gs)), 2))
     in_feat = all_feats[0].shape[1]
 
-    dgi = DGI(in_feat, 512, 1, nn.PReLU(512), 0, l2_mutual=False)  # True
-    # dgi = dgi.to(gpu)
+    dgi = DGI(in_feat, 512, 1, nn.PReLU(512), 0, l2_mutual=False)
 
     dgi_optimizer = torch.optim.Adam(dgi.parameters(), lr=1e-3, weight_decay=0.0)
 
@@ -51,11 +43,6 @@ def main(args):
         dgi_optimizer.zero_grad()
 
         total_loss = 0
-        # for id_1, id_2 in g_pairs:
-        # features = [all_feats[id_1], all_feats[id_2]]
-        # gs = [all_gs[id_1], all_gs[id_2]]
-
-        # loss = dgi(features, gs)
         loss = dgi(all_feats, all_gs)
         loss.backward()
         dgi_optimizer.step()
@@ -65,7 +52,7 @@ def main(args):
             best = loss
             best_t = epoch
             cnt_wait = 0
-            torch.save(dgi.state_dict(), "allLabels10Clusters.pkl")
+            torch.save(dgi.state_dict(), savePath)
         else:
             cnt_wait += 1
 
@@ -81,6 +68,7 @@ def main(args):
                 epoch, np.mean(dur), loss.item()
             )
         )
+    print(f"Embeddings saved at {savePath}")
 
 
 if __name__ == "__main__":
